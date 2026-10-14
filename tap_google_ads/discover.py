@@ -3,7 +3,8 @@ import sys
 
 import singer
 
-from tap_google_ads.client import create_sdk_client
+from tap_google_ads.api_version import GOOGLE_ADS_API_VERSION
+from tap_google_ads.client import create_sdk_client, default_login_customer_id
 from tap_google_ads.streams import initialize_core_streams
 from tap_google_ads.streams import initialize_reports
 
@@ -61,7 +62,10 @@ CATEGORY_MAP = {
 
 
 def get_api_objects(config):
-    client = create_sdk_client(config)
+    client = create_sdk_client(
+        config, login_customer_id=default_login_customer_id(config)
+    )
+    LOGGER.info("Using Google Ads API version %s for field discovery", GOOGLE_ADS_API_VERSION)
     gaf_service = client.get_service("GoogleAdsFieldService")
 
     query = "SELECT name, category, data_type, selectable, filterable, sortable, selectable_with, metrics, segments, is_repeated, type_url, enum_values, attribute_resources"

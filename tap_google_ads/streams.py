@@ -11,10 +11,9 @@ from google.api_core.exceptions import ServerError, TooManyRequests
 from requests.exceptions import ReadTimeout
 import backoff
 from . import report_definitions
+from tap_google_ads.gaql import search_with_unrecognized_field_pruning
 
 LOGGER = singer.get_logger()
-
-API_VERSION = "v24"
 
 API_PARAMETERS = {
     "omit_unselected_resource_names": "true"
@@ -79,14 +78,31 @@ def create_nested_resource_schema(resource_schema, fields):
     return new_schema
 
 
-def get_selected_fields(stream_mdata):
+def get_selected_fields(stream_mdata, stream_metadata_fallback=None):
+    """Resolve Google Ads API field names for selected catalog fields.
+
+    Meltano's generated catalog often omits custom metadata from discover
+    (``tap-google-ads.api-field-names``). Fall back to stream metadata built
+    during sync from the live resource schema.
+    """
     selected_fields = set()
     for mdata in stream_mdata:
-        if mdata["breadcrumb"]:
-            inclusion = mdata["metadata"].get("inclusion")
-            selected = mdata["metadata"].get("selected")
-            if utils.should_sync_field(inclusion, selected) and mdata["breadcrumb"][1] != "_sdc_record_hash":
-                selected_fields.update(mdata["metadata"]["tap-google-ads.api-field-names"])
+        if not mdata["breadcrumb"]:
+            continue
+        inclusion = mdata["metadata"].get("inclusion")
+        selected = mdata["metadata"].get("selected")
+        if not utils.should_sync_field(inclusion, selected):
+            continue
+        if mdata["breadcrumb"][1] == "_sdc_record_hash":
+            continue
+
+        api_field_names = mdata["metadata"].get("tap-google-ads.api-field-names")
+        if not api_field_names and stream_metadata_fallback:
+            fallback_meta = stream_metadata_fallback.get(tuple(mdata["breadcrumb"]), {})
+            api_field_names = fallback_meta.get("tap-google-ads.api-field-names")
+
+        if api_field_names:
+            selected_fields.update(api_field_names)
 
     return selected_fields
 
@@ -241,6 +257,7 @@ def make_request(gas, query, customer_id, config=None):
     if config is None:
         config = {}
     request_timeout = get_request_timeout(config)
+    customer_id = str(customer_id).replace("-", "").strip()
     response = gas.search(query=query, customer_id=customer_id, timeout=request_timeout)
     return response
 
@@ -422,11 +439,15 @@ class BaseStream:  # pylint: disable=too-many-instance-attributes
         return transformed_message
 
     def sync(self, sdk_client, customer, stream, config, state, query_limit): # pylint: disable=unused-argument
-        gas = sdk_client.get_service("GoogleAdsService", version=API_VERSION)
+        gas = sdk_client.get_service("GoogleAdsService")
         resource_name = self.google_ads_resource_names[0]
         stream_name = stream["stream"]
         stream_mdata = stream["metadata"]
-        selected_fields = get_selected_fields(stream_mdata)
+        selected_fields = get_selected_fields(stream_mdata, self.stream_metadata)
+        if not selected_fields:
+            raise RuntimeError(
+                f"No selectable fields for stream {stream_name}; check catalog selection"
+            )
         state = singer.set_currently_syncing(state, [stream_name, customer["customerId"]])
         singer.write_state(state)
 
@@ -461,12 +482,24 @@ class BaseStream:  # pylint: disable=too-many-instance-attributes
 
             # Loop until the last page.
             while is_more_records:
-                query = create_core_stream_query(resource_name, selected_fields, last_pk_fetched_value, self.filter_param, composite_pks, limit=limit)
-                try:
-                    response = make_request(gas, query, customer["customerId"], config)
-                except GoogleAdsException as err:
-                    LOGGER.warning("Failed query: %s", query)
-                    raise err
+                def build_query(fields):
+                    return create_core_stream_query(
+                        resource_name,
+                        fields,
+                        last_pk_fetched_value,
+                        self.filter_param,
+                        composite_pks,
+                        limit=limit,
+                    )
+
+                response = search_with_unrecognized_field_pruning(
+                    gas,
+                    build_query,
+                    selected_fields,
+                    customer["customerId"],
+                    make_request,
+                    config=config,
+                )
                 num_rows = 0
 
                 with Transformer() as transformer:
@@ -696,11 +729,15 @@ class ReportStream(BaseStream):
         return transformed_message
 
     def sync(self, sdk_client, customer, stream, config, state, query_limit):
-        gas = sdk_client.get_service("GoogleAdsService", version=API_VERSION)
+        gas = sdk_client.get_service("GoogleAdsService")
         resource_name = self.google_ads_resource_names[0]
         stream_name = stream["stream"]
         stream_mdata = stream["metadata"]
-        selected_fields = get_selected_fields(stream_mdata)
+        selected_fields = get_selected_fields(stream_mdata, self.stream_metadata)
+        if not selected_fields:
+            raise RuntimeError(
+                f"No selectable fields for stream {stream_name}; check catalog selection"
+            )
         replication_key = "date"
         state = singer.set_currently_syncing(state, [stream_name, customer["customerId"]])
         singer.write_state(state)
@@ -736,14 +773,23 @@ class ReportStream(BaseStream):
             raise Exception(f"Selected fields is currently limited to {', '.join(selected_fields)}. Please select at least one attribute and metric in order to replicate {stream_name}.")
 
         while query_date <= end_date:
-            query = create_report_query(resource_name, selected_fields, query_date)
             LOGGER.info(f"Requesting {stream_name} data for {utils.strftime(query_date, '%Y-%m-%d')}.")
 
+            def build_report_query(fields):
+                return create_report_query(resource_name, fields, query_date)
+
             try:
-                response = make_request(gas, query, customer["customerId"], config)
+                response = search_with_unrecognized_field_pruning(
+                    gas,
+                    build_report_query,
+                    selected_fields,
+                    customer["customerId"],
+                    make_request,
+                    config=config,
+                )
             except GoogleAdsException as err:
-                LOGGER.warning("Failed query: %s", query)
-                LOGGER.critical(str(err.failure.errors[0].message))
+                if err.failure.errors:
+                    LOGGER.critical(str(err.failure.errors[0].message))
                 raise RuntimeError from None
 
 

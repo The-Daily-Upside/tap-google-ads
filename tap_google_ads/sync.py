@@ -1,6 +1,5 @@
-import json
 import singer
-from tap_google_ads.client import create_sdk_client
+from tap_google_ads.client import create_sdk_client, resolve_customers
 from tap_google_ads.streams import initialize_core_streams, initialize_reports
 
 LOGGER = singer.get_logger()
@@ -71,15 +70,9 @@ def get_query_limit(config):
         return DEFAULT_QUERY_LIMIT
 
 def do_sync(config, catalog, resource_schema, state):
-    # QA ADDED WORKAROUND [START]
-    try:
-        customers = json.loads(config["login_customer_ids"])
-    except TypeError:  # falling back to raw value
-        customers = config["login_customer_ids"]
+    customers = resolve_customers(config)
 
-    # Get query limit
     query_limit = get_query_limit(config)
-    # QA ADDED WORKAROUND [END]
     customers = sort_customers(customers)
 
     selected_streams = [
@@ -117,9 +110,18 @@ def do_sync(config, catalog, resource_schema, state):
         singer.messages.write_schema(stream_name, catalog_entry["schema"], primary_key)
 
         for customer in customers:
-            sdk_client = create_sdk_client(config, customer["loginCustomerId"])
-
-            LOGGER.info(f"Syncing {stream_name} for customer Id {customer['customerId']}.")
+            login_customer_id = customer["loginCustomerId"]
+            # Direct account access: omit login-customer-id when it matches customerId
+            # (required for some service-account setups; see Google Ads API call structure).
+            if login_customer_id == customer["customerId"]:
+                login_customer_id = None
+            sdk_client = create_sdk_client(config, login_customer_id)
+            LOGGER.info(
+                "Syncing %s for customerId=%s loginCustomerId=%s",
+                stream_name,
+                customer["customerId"],
+                login_customer_id or "(direct, no MCC header)",
+            )
 
             if core_streams.get(stream_name):
                 stream_obj = core_streams[stream_name]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from setuptools import setup
+from setuptools import find_packages, setup
 
 setup(name='tap-google-ads',
       version='2.1.0',
@@ -8,12 +8,11 @@ setup(name='tap-google-ads',
       author='Stitch',
       url='http://singer.io',
       classifiers=['Programming Language :: Python :: 3 :: Only'],
-      py_modules=['tap_google_ads'],
       install_requires=[
           'singer-python==6.1.1',
           'requests==2.34.2',
           'backoff==2.2.1',
-          'google-ads==30.1.0',
+          'google-ads>=32.0.0',
           'protobuf==6.33.6',
 
           # Necessary to handle gRPC exceptions properly, documented
@@ -31,8 +30,6 @@ setup(name='tap-google-ads',
           [console_scripts]
           tap-google-ads=tap_google_ads:main
       ''',
-      packages=['tap_google_ads'],
-      package_data = {
-      },
+      packages=find_packages(exclude=['tests', 'tests.*', 'tap_google_ads.tests', 'tap_google_ads.tests.*']),
       include_package_data=True,
 )

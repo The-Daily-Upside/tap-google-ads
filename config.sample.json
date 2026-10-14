@@ -1,8 +1,6 @@
 {
     "start_date": "2020-10-01T00:00:00Z",
-    "login_customer_ids": [{"customerId": "1234567890", "loginCustomerId": "0987654321"}],
-    "oauth_client_id":"client_id",
-    "oauth_client_secret":"client_secret",
-    "refresh_token":"refresh_token",
-    "developer_token":"developer_token"
+    "customer_id": "1234567890",
+    "login_customer_id": "3018979978",
+    "json_key_file_path": "/path/to/service-account.json"
 }

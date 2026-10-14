@@ -52,7 +52,12 @@ The Google Ads API supports the `start_date` and `end_date` parameters that limi
 
 ## Configuration
 
-This tap requires a `config.json` which specifies details regarding [OAuth 2.0](https://developers.google.com/google-ads/api/docs/oauth/overview) authentication and a cutoff date for syncing historical data. See [config.sample.json](config.sample.json) for an example.
+This tap requires a `config.json` with a `start_date` and `customer_id` (numeric Google Ads account id, no dashes). For a **client account under an MCC**, set `customer_id` to the client and `login_customer_id` to the manager account. For multiple clients, use `login_customer_ids` instead (and omit `customer_id`). Uses `google-ads` Python library **32+** (developer token optional; API access is tied to your GCP project credentials). Discovery and sync use the library’s default API version (aligned automatically). If Google’s field metadata lists a GAQL field that Search rejects, the tap drops that field and retries the query. Authenticate with either:
+
+- **Service account (recommended for automation):** `json_key_file_path` pointing at a GCP service account key; add that email in Google Ads → Admin → Access and security.
+- **OAuth:** `oauth_client_id`, `oauth_client_secret`, and `refresh_token` ([OAuth 2.0 overview](https://developers.google.com/google-ads/api/docs/oauth/overview)).
+
+See [config.sample.json](config.sample.json) for an example.
 
 To run the discover mode of `tap-google-ads` with the configuration file, use this command:
 
